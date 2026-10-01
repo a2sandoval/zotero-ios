@@ -15,6 +15,7 @@ enum VoiceUtility {
 
     /// Finds a local voice for the given language.
     /// Uses a unified 6-step priority chain: stored default, exact match, canonical variation, device locale, canonical device locale, en-US fallback.
+    /// At every locale step the highest-quality installed voice wins, so premium (Siri) voices are preferred whenever available.
     static func findLocalVoice(for language: String, from voices: [AVSpeechSynthesisVoice] = AVSpeechSynthesisVoice.speechVoices()) -> AVSpeechSynthesisVoice? {
         return findVoice(
             for: language,
@@ -23,7 +24,7 @@ enum VoiceUtility {
                 return voices.first(where: { $0.identifier == voiceId })
             },
             voiceForLocale: { locale in
-                voices.first(where: { $0.language == locale })
+                bestQualityVoice(for: locale, from: voices)
             }
         )
     }
@@ -79,6 +80,12 @@ enum VoiceUtility {
             }
         }
         return result
+    }
+
+    /// Returns the highest-quality local voice for an exact locale.
+    /// Premium (Siri) voices sort first, then enhanced, then default quality.
+    static func bestQualityVoice(for locale: String, from voices: [AVSpeechSynthesisVoice]) -> AVSpeechSynthesisVoice? {
+        sortedByQuality(voices.filter({ $0.language == locale })).first
     }
 
     // MARK: - Grouping
@@ -171,14 +178,17 @@ enum VoiceUtility {
 
     /// Filters and sorts system local voices by a predicate. Sorted by quality (premium > enhanced > other), then by name.
     private static func filterLocalVoices(matching predicate: (AVSpeechSynthesisVoice) -> Bool) -> [AVSpeechSynthesisVoice] {
-        AVSpeechSynthesisVoice.speechVoices()
-            .filter(predicate)
-            .sorted {
-                let q0 = qualitySortOrder($0.quality)
-                let q1 = qualitySortOrder($1.quality)
-                if q0 != q1 { return q0 < q1 }
-                return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
-            }
+        sortedByQuality(AVSpeechSynthesisVoice.speechVoices().filter(predicate))
+    }
+
+    /// Sorts voices by quality (premium > enhanced > other), then by name.
+    private static func sortedByQuality(_ voices: [AVSpeechSynthesisVoice]) -> [AVSpeechSynthesisVoice] {
+        voices.sorted {
+            let q0 = qualitySortOrder($0.quality)
+            let q1 = qualitySortOrder($1.quality)
+            if q0 != q1 { return q0 < q1 }
+            return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
     }
 
     /// Returns sort order for voice quality (lower = better).
