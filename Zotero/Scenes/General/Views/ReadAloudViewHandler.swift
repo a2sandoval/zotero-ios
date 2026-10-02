@@ -324,7 +324,7 @@ final class ReadAloudViewHandler<Delegate: SpeechManagerDelegate> {
                 return value.label
 
             case .kokoro(let value):
-                return value.name
+                return value.displayName
             }
         }
     }
