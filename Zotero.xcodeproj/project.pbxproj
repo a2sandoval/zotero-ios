@@ -5083,7 +5083,7 @@
 			name = Zotero;
 			packageProductDependencies = (
 				B35E4B8C25248B3C000EA134 /* RxSwift */,
-				C0C0A1000000000000000002 /* sherpa-onnx-shared */,
+				C0C0A1000000000000000002 /* sherpa-onnx */,
 				B35E4B8E25248B3C000EA134 /* RxCocoa */,
 				B35E4B9425248BAD000EA134 /* RxBlocking */,
 				B35E4B9625248BAD000EA134 /* RxRelay */,
@@ -8228,10 +8228,10 @@
 			package = B356A3822524A66A003F1943 /* XCRemoteSwiftPackageReference "ZIPFoundation" */;
 			productName = ZIPFoundation;
 		};
-		C0C0A1000000000000000002 /* sherpa-onnx-shared */ = {
+		C0C0A1000000000000000002 /* sherpa-onnx */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = C0C0A1000000000000000001 /* XCRemoteSwiftPackageReference "sherpa-onnx" */;
-			productName = "sherpa-onnx-shared";
+			productName = "sherpa-onnx";
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
