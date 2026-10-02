@@ -8054,10 +8054,10 @@
 		};
 		C0C0A1000000000000000001 /* XCRemoteSwiftPackageReference "sherpa-onnx" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/k2-fsa/sherpa-onnx";
+			repositoryURL = "https://github.com/a2sandoval/sherpa-onnx";
 			requirement = {
-				kind = exactVersion;
-				version = 1.13.8;
+				branch = zotero;
+				kind = branch;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
