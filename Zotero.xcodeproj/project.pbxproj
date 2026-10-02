@@ -990,6 +990,7 @@
 		B387AE0D2F4343E6009D0DD5 /* NowPlayingManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B387AE0C2F4343E6009D0DD5 /* NowPlayingManager.swift */; };
 		B387AE612F4759CC009D0DD5 /* LanguageDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = B387AE602F4759C9009D0DD5 /* LanguageDetector.swift */; };
 		B387AE632F4878E3009D0DD5 /* VoiceUtility.swift in Sources */ = {isa = PBXBuildFile; fileRef = B387AE622F4878E3009D0DD5 /* VoiceUtility.swift */; };
+		C0C0A1000000000000000004 /* KokoroVoice.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0C0A1000000000000000003 /* KokoroVoice.swift */; };
 		B38B24B926E7664400BDD1BB /* AnnotationToolOptionsViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B38B24B826E7664400BDD1BB /* AnnotationToolOptionsViewController.swift */; };
 		B38CD21E241128D4004299EA /* KeysResponseProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B38CD21D241128D4004299EA /* KeysResponseProcessor.swift */; };
 		B38CD21F241128FE004299EA /* KeysResponseProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B38CD21D241128D4004299EA /* KeysResponseProcessor.swift */; };
@@ -2337,6 +2338,7 @@
 		B387AE0C2F4343E6009D0DD5 /* NowPlayingManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingManager.swift; sourceTree = "<group>"; };
 		B387AE602F4759C9009D0DD5 /* LanguageDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LanguageDetector.swift; sourceTree = "<group>"; };
 		B387AE622F4878E3009D0DD5 /* VoiceUtility.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceUtility.swift; sourceTree = "<group>"; };
+		C0C0A1000000000000000003 /* KokoroVoice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KokoroVoice.swift; sourceTree = "<group>"; };
 		B38B24B826E7664400BDD1BB /* AnnotationToolOptionsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnotationToolOptionsViewController.swift; sourceTree = "<group>"; };
 		B38CD21D241128D4004299EA /* KeysResponseProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeysResponseProcessor.swift; sourceTree = "<group>"; };
 		B390EE2B29B5F419004F979B /* PDFCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFCoordinator.swift; sourceTree = "<group>"; };
@@ -2929,6 +2931,7 @@
 				B36A988C2428E059005D5790 /* TranslatorsAndStylesController.swift */,
 				B3972688247D403200A8B469 /* UrlDetector.swift */,
 				B387AE622F4878E3009D0DD5 /* VoiceUtility.swift */,
+				C0C0A1000000000000000003 /* KokoroVoice.swift */,
 				B324276C25C81F2000567504 /* WebSocketController.swift */,
 				B3F9A4CA2B04F28400684030 /* WebViewEncoder.swift */,
 				B3B557152C884DD200BD6325 /* ZoteroURIConverter.swift */,
@@ -5066,6 +5069,7 @@
 				B30D59512206F60400884C4A /* Sources */,
 				B30D59522206F60400884C4A /* Frameworks */,
 				B30D59532206F60400884C4A /* Resources */,
+				C0C0A1000000000000000005 /* Bundle Kokoro model */,
 				B311B3272386A39800BCF592 /* Embed Foundation Extensions */,
 				B3E196FA25308D9700DBBE5C /* CopyFiles */,
 				B3E196FB25308DA500DBBE5C /* Fix Code Signing */,
@@ -5079,6 +5083,7 @@
 			name = Zotero;
 			packageProductDependencies = (
 				B35E4B8C25248B3C000EA134 /* RxSwift */,
+				C0C0A1000000000000000002 /* sherpa-onnx-shared */,
 				B35E4B8E25248B3C000EA134 /* RxCocoa */,
 				B35E4B9425248BAD000EA134 /* RxBlocking */,
 				B35E4B9625248BAD000EA134 /* RxRelay */,
@@ -5291,6 +5296,7 @@
 			mainGroup = B30D594C2206F60400884C4A;
 			packageReferences = (
 				B35E4B8B25248B3C000EA134 /* XCRemoteSwiftPackageReference "RxSwift" */,
+				C0C0A1000000000000000001 /* XCRemoteSwiftPackageReference "sherpa-onnx" */,
 				B356A361252490B3003F1943 /* XCRemoteSwiftPackageReference "Alamofire" */,
 				B356A367252490DB003F1943 /* XCRemoteSwiftPackageReference "keychain-swift" */,
 				B356A3732524A601003F1943 /* XCRemoteSwiftPackageReference "RxSwiftExt" */,
@@ -5492,6 +5498,24 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		C0C0A1000000000000000005 /* Bundle Kokoro model */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Bundle Kokoro model";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\nMODEL_URL=\"https://github.com/a2sandoval/kokoro-tts-ios/releases/download/model-v1/kokoro-model-v1.zip\"\nCACHE_DIR=\"${HOME}/Library/Caches/kokoro-tts-ios\"\nZIP=\"$CACHE_DIR/kokoro-model-v1.zip\"\nDEST=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\nmkdir -p \"$CACHE_DIR\"\nif [ ! -f \"$ZIP\" ]; then\necho \"Downloading Kokoro model bundle (~125 MB)...\"\ncurl -sSL --retry 3 -o \"$ZIP\" \"$MODEL_URL\"\nfi\nif [ ! -f \"$DEST/model.int8.onnx\" ]; then\necho \"Extracting Kokoro model bundle into the app...\"\nunzip -o -q \"$ZIP\" -d \"$DEST\"\nfi";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 
 /* Begin PBXShellScriptBuildPhase section */
 		6179996F2D79F40B0051D35E /* SwiftGen */ = {
@@ -6455,6 +6479,7 @@
 				B30D59592206F60400884C4A /* AppDelegate.swift in Sources */,
 				B357A292285B786E00E73CA1 /* LookupCoordinator.swift in Sources */,
 				B387AE632F4878E3009D0DD5 /* VoiceUtility.swift in Sources */,
+				C0C0A1000000000000000004 /* KokoroVoice.swift in Sources */,
 				B34A9F6425BF1ABB007C9A4A /* PDFDocumentExporter.swift in Sources */,
 				B340AB3D2F18FAF4004B45ED /* ReadAloudAudioRequest.swift in Sources */,
 				B377F2A5249373F300022943 /* AttachmentFileCleanupController.swift in Sources */,
@@ -8027,6 +8052,14 @@
 				version = 4.0.8;
 			};
 		};
+		C0C0A1000000000000000001 /* XCRemoteSwiftPackageReference "sherpa-onnx" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/k2-fsa/sherpa-onnx";
+			requirement = {
+				kind = exactVersion;
+				version = 1.13.8;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -8194,6 +8227,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = B356A3822524A66A003F1943 /* XCRemoteSwiftPackageReference "ZIPFoundation" */;
 			productName = ZIPFoundation;
+		};
+		C0C0A1000000000000000002 /* sherpa-onnx-shared */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C0C0A1000000000000000001 /* XCRemoteSwiftPackageReference "sherpa-onnx" */;
+			productName = "sherpa-onnx-shared";
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

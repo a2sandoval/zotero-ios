@@ -300,6 +300,7 @@
 "speech.onboarding.tier_premium" = "Premium";
 "speech.onboarding.tier_standard" = "Standard";
 "speech.onboarding.tier_local" = "Local";
+"speech.onboarding.tier_kokoro" = "Kokoro";
 "speech.onboarding.description_premium_1" = "Highest-quality voices";
 "speech.onboarding.description_premium_2" = "Only available with an internet connection";
 "speech.onboarding.description_premium_3" = "Broad language selection";
@@ -316,6 +317,9 @@
 "speech.onboarding.description_local_1" = "Voices provided by your operating system";
 "speech.onboarding.description_local_2" = "Available without an internet connection";
 "speech.onboarding.description_local_3" = "Free to use";
+"speech.onboarding.description_kokoro_1" = "Free, open-source neural voices";
+"speech.onboarding.description_kokoro_2" = "Run entirely on your iPhone";
+"speech.onboarding.description_kokoro_3" = "Available without an internet connection";
 "speech.voices" = "Voices";
 "speech.region" = "Region";
 "speech.local_sample" = "I am the local voice %@.";

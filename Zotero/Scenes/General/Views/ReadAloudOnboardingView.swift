@@ -38,7 +38,7 @@ struct ReadAloudOnboardingView: View {
                     .padding(.top, 30)
 
                 Picker("", selection: $model.type) {
-                    ForEach([ReadAloudVoiceType.standard, .premium, .local], id: \.self) { tier in
+                    ForEach([ReadAloudVoiceType.standard, .premium, .local, .kokoro], id: \.self) { tier in
                         Text(tier.title).tag(tier)
                     }
                 }

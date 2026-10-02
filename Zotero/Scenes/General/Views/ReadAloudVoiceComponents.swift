@@ -121,6 +121,40 @@ struct ReadAloudVoicesSection: View {
                     .padding(.vertical, 20)
                 }
             }
+
+        case .kokoro:
+            ReadAloudKokoroVoicesSection(selectedVoice: $selectedVoice)
+        }
+    }
+}
+
+// MARK: - Kokoro Voices Section
+
+/// On-device Kokoro neural voices (Heart, Adam). No sample playback — the engine
+/// is initialized lazily by the speech processor on first use.
+struct ReadAloudKokoroVoicesSection: View {
+    @Binding var selectedVoice: SpeechVoice?
+
+    var body: some View {
+        Section(L10n.Speech.voices.uppercased()) {
+            ForEach(KokoroVoice.all, id: \.sid) { voice in
+                HStack {
+                    VStack(alignment: .leading) {
+                        Text(voice.displayName)
+                        Text(voice.accentDescription)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if case .kokoro(let selected) = selectedVoice, selected == voice {
+                        Image(systemName: "checkmark").foregroundColor(Asset.Colors.zoteroBlueWithDarkMode.swiftUIColor)
+                    }
+                }
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    selectedVoice = .kokoro(voice)
+                }
+            }
         }
     }
 }

@@ -198,6 +198,7 @@ enum SpeechState: Equatable {
 enum SpeechVoice: Equatable {
     case local(AVSpeechSynthesisVoice)
     case remote(RemoteVoice)
+    case kokoro(KokoroVoice)
 }
 
 final class SpeechManager<Delegate: SpeechManagerDelegate>: NSObject, VoiceProcessorDelegate, @unchecked Sendable {
@@ -327,6 +328,10 @@ final class SpeechManager<Delegate: SpeechManagerDelegate>: NSObject, VoiceProce
         case .remote(let voice):
             return voice.granularity == .paragraph ? .paragraph : .sentence
 
+        case .kokoro:
+            // Kokoro speaks sentence by sentence.
+            return .sentence
+
         case .local, .none:
             return .sentence
         }
@@ -429,7 +434,7 @@ final class SpeechManager<Delegate: SpeechManagerDelegate>: NSObject, VoiceProce
         return (chosen, max(0, min(offset - paragraph.pageOffset, paragraph.text.count)))
     }
 
-    init(delegate: Delegate, voiceLanguage: String?, remoteVoiceTier: RemoteVoice.Tier?, remoteVoicesController: RemoteVoicesController, documentWorkerController: DocumentWorkerController) {
+    init(delegate: Delegate, voiceLanguage: String?, remoteVoiceTier: RemoteVoice.Tier?, kokoroVoice: KokoroVoice?, remoteVoicesController: RemoteVoicesController, documentWorkerController: DocumentWorkerController) {
         self.delegate = delegate
         self.remoteVoicesController = remoteVoicesController
         self.documentWorkerController = documentWorkerController
@@ -450,7 +455,15 @@ final class SpeechManager<Delegate: SpeechManagerDelegate>: NSObject, VoiceProce
         }
         // Speech rate is remembered across documents, so that reading always starts with the previously used rate.
         let storedSpeechRate = Defaults.shared.speechRate
-        if let remoteVoiceTier {
+        if let kokoroVoice {
+            processor = KokoroVoiceProcessor(
+                language: voiceLanguage,
+                detectedLanguage: nil,
+                voice: kokoroVoice,
+                speechRateModifier: storedSpeechRate,
+                delegate: self
+            )
+        } else if let remoteVoiceTier {
             processor = RemoteVoiceProcessor(
                 language: voiceLanguage,
                 detectedLanguage: nil,
@@ -920,6 +933,22 @@ final class SpeechManager<Delegate: SpeechManagerDelegate>: NSObject, VoiceProce
                 processor = _processor
                 nowPlayingManager.reconfigureAudioSession()
             }
+
+        case .kokoro(let voice):
+            if let processor = processor as? KokoroVoiceProcessor {
+                processor.set(voice: voice, preferredLanguage: preferredLanguage)
+            } else {
+                let _processor = KokoroVoiceProcessor(
+                    language: preferredLanguage,
+                    detectedLanguage: processor.detectedLanguage,
+                    voice: voice,
+                    speechRateModifier: processor.speechRateModifier,
+                    delegate: self
+                )
+                processor = _processor
+                remainingTime.accept(nil)
+                nowPlayingManager.reconfigureAudioSession()
+            }
         }
     }
 
@@ -939,6 +968,10 @@ final class SpeechManager<Delegate: SpeechManagerDelegate>: NSObject, VoiceProce
         case .remote(let remoteVoice):
             let granularity: NLTokenUnit = remoteVoice.granularity == .paragraph ? .paragraph : .sentence
             voiceInfo = .remote(granularity: granularity, audioProgress: processor.segmentAudioProgress, elapsedTime: processor.segmentAudioElapsedTime)
+
+        case .kokoro:
+            // Kokoro plays sentence audio like a remote sentence-granularity voice.
+            voiceInfo = .remote(granularity: .sentence, audioProgress: processor.segmentAudioProgress, elapsedTime: processor.segmentAudioElapsedTime)
 
         case .local:
             voiceInfo = .local
@@ -1102,8 +1135,8 @@ final class SpeechManager<Delegate: SpeechManagerDelegate>: NSObject, VoiceProce
                 downgradeToLocalVoice()
             }
 
-        case .local:
-            // Already at lowest tier, nothing to downgrade to
+        case .local, .kokoro:
+            // Already at lowest tier (Kokoro is free), nothing to downgrade to
             break
         }
 
@@ -2185,6 +2218,488 @@ extension RemoteVoiceProcessor: AVAudioPlayerDelegate {
 
     func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: (any Swift.Error)?) {
         DDLogError("RemoteVoiceProcessor: decode error - \(String(describing: error))")
+        finishSpeaking()
+    }
+}
+
+#if canImport(SherpaOnnxShared)
+import SherpaOnnxShared
+#elseif canImport(SherpaOnnx)
+import SherpaOnnx
+#endif
+
+/// On-device neural TTS via Kokoro (sherpa-onnx). Speaks sentence by sentence like the remote
+/// processor, but generates audio locally instead of downloading it. Free and fully offline.
+private final class KokoroVoiceProcessor: NSObject, VoiceProcessor {
+    enum Error: Swift.Error {
+        case cancelled
+        case missingModel
+        case engineFailed
+        case endOfPage
+    }
+
+    /// Number of sentences to keep generated ahead of current playback.
+    private static let preloadAheadCount = 2
+
+    private unowned let delegate: VoiceProcessorDelegate
+    /// Dedicated serial queue for blocking TTS inference.
+    private let ttsQueue = DispatchQueue(label: "KokoroVoiceProcessor.tts", qos: .userInitiated)
+
+    private var segments: [SpeechDocumentParser.Segment] = []
+    private(set) var preferredLanguage: String?
+    var detectedLanguage: String?
+    private var voice: KokoroVoice?
+    private var player: AVAudioPlayer?
+    /// Incremented on every speak/stop; stale generation completions are discarded.
+    private var epoch = 0
+    /// Cancellation flag for the in-flight generation, shared with the C progress callback.
+    private var genState: GenState?
+    /// Cache of generated WAV audio keyed by page-text range.
+    private var segmentCache: [NSRange: Data] = [:]
+    /// Ranges currently being generated.
+    private var loadingSegments: Set<NSRange> = []
+    /// Range that should start playing as soon as its generation finishes.
+    private var pendingPlaybackRange: NSRange?
+    private var shouldReloadOnResume = false
+    private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
+    #if canImport(SherpaOnnxShared) || canImport(SherpaOnnx)
+    private var tts: SherpaOnnxOfflineTtsWrapper?
+    #endif
+
+    /// Cancellation flag shared with the C progress callback (callback thread only reads).
+    private final class GenState: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _cancelled = false
+        var cancelled: Bool {
+            get { lock.lock(); defer { lock.unlock() }; return _cancelled }
+            set { lock.lock(); defer { lock.unlock() }; _cancelled = newValue }
+        }
+    }
+
+    var speechRateModifier: Float {
+        didSet {
+            guard speechRateModifier != oldValue else { return }
+            // Speed is baked into generation; drop cached audio and regenerate.
+            segmentCache.removeAll()
+            loadingSegments.removeAll()
+            if player?.isPlaying == true, let speechRange = delegate.speechRange, let voice {
+                genState?.cancelled = true
+                player?.stop()
+                self.player = nil
+                startSpeaking(startIndex: speechRange.location, voice: voice)
+            } else if player != nil {
+                shouldReloadOnResume = true
+            }
+        }
+    }
+    var speechVoice: SpeechVoice? {
+        return voice.flatMap({ .kokoro($0) })
+    }
+    var canResume: Bool {
+        return player != nil
+    }
+    var segmentAudioProgress: Float {
+        guard let player, player.duration > 0 else { return 0 }
+        return Float(player.currentTime / player.duration)
+    }
+    var segmentAudioElapsedTime: TimeInterval {
+        return player?.currentTime ?? 0
+    }
+
+    init(language: String?, detectedLanguage: String?, voice: KokoroVoice?, speechRateModifier: Float, delegate: VoiceProcessorDelegate) {
+        preferredLanguage = language
+        self.detectedLanguage = detectedLanguage
+        self.voice = voice
+        self.speechRateModifier = speechRateModifier
+        self.delegate = delegate
+        super.init()
+    }
+
+    // MARK: - Actions
+
+    func set(voice: KokoroVoice, preferredLanguage: String?) {
+        let voiceChanged = self.voice != voice
+        self.preferredLanguage = preferredLanguage
+        self.voice = voice
+        delegate.remainingTime.accept(nil)
+        if voiceChanged {
+            stopGenerationAndClearCache()
+            if let player, player.isPlaying {
+                player.stop()
+                self.player = nil
+                shouldReloadOnResume = true
+            }
+        }
+    }
+
+    func speak(segments: [SpeechDocumentParser.Segment], startPageTextOffset: Int) {
+        if self.segments.map(\.text) != segments.map(\.text) || startPageTextOffset != 0 {
+            stopGenerationAndClearCache()
+        }
+        self.segments = segments
+        genState?.cancelled = true
+        genState = nil
+        epoch += 1
+        if player?.isPlaying == true {
+            player?.stop()
+        }
+        player = nil
+
+        if delegate.state.value != .initializing {
+            delegate.state.accept(.loading)
+        }
+
+        // Language is detected once at session start, so the voice is resolved only the first time and then reused.
+        let voice = self.voice ?? .heart
+        self.voice = voice
+        startSpeaking(startIndex: startPageTextOffset, voice: voice)
+    }
+
+    func pause() {
+        guard player?.isPlaying == true else { return }
+        player?.pause()
+        delegate.state.accept(.paused)
+    }
+
+    func resume() {
+        guard let player, delegate.state.value == .paused else { return }
+        if shouldReloadOnResume {
+            shouldReloadOnResume = false
+            reloadCurrentSegment()
+        } else {
+            player.play()
+            delegate.state.accept(.speaking)
+        }
+
+        func reloadCurrentSegment() {
+            guard !segments.isEmpty, let voice, let speechRange = delegate.speechRange else { return }
+            segmentCache.removeAll()
+            loadingSegments.removeAll()
+            player.stop()
+            self.player = nil
+            startSpeaking(startIndex: speechRange.location, voice: voice)
+        }
+    }
+
+    func stop() {
+        finishSpeaking()
+    }
+
+    func invalidateCurrentPlayback() {
+        shouldReloadOnResume = true
+    }
+
+    // MARK: - Speech
+
+    private func startSpeaking(startIndex: Int, voice: KokoroVoice) {
+        guard let range = findNextRange(startingAt: startIndex) else {
+            handleSpeechFailure(error: Error.endOfPage)
+            return
+        }
+
+        // Report the range immediately so the highlight updates without waiting for audio generation.
+        delegate.speechRangeWillChange(to: range)
+
+        if let cachedData = segmentCache[range] {
+            handleSpeechSuccess(data: cachedData, range: range)
+            ensureSegmentsGenerated(after: range, voice: voice)
+            return
+        }
+
+        if loadingSegments.contains(range) {
+            pendingPlaybackRange = range
+            delegate.state.accept(.loading)
+            return
+        }
+
+        delegate.state.accept(.loading)
+        generateAndPlay(range: range, voice: voice)
+    }
+
+    private func findNextRange(startingAt index: Int) -> NSRange? {
+        // Kokoro always speaks sentence by sentence.
+        return SpeechDocumentParser.sentenceRange(startingAt: index, in: segments)
+    }
+
+    /// Returns the text to synthesize for a page-text range, extracted from the segment that contains it.
+    private func text(forPageTextRange range: NSRange) -> String? {
+        for segment in segments where range.location >= segment.pageOffset && range.location < segment.pageOffset + segment.text.count {
+            // Page text ranges are `Character` offsets, so the segment text is sliced in the same index space.
+            let intra = NSRange(location: range.location - segment.pageOffset, length: range.length)
+            return segment.text.substring(atCharacterRange: intra)
+        }
+        return nil
+    }
+
+    private func generateAndPlay(range: NSRange, voice: KokoroVoice) {
+        loadingSegments.insert(range)
+        let epoch = self.epoch
+        let speed = speechRateModifier
+        guard let text = text(forPageTextRange: range), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            loadingSegments.remove(range)
+            handleSpeechFailure(error: Error.endOfPage)
+            return
+        }
+
+        let state = GenState()
+        genState = state
+        ttsQueue.async { [weak self] in
+            let data = self?.generateWav(text: text, voice: voice, speed: speed, state: state)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.epoch == epoch else { return }
+                self.loadingSegments.remove(range)
+                if self.genState === state { self.genState = nil }
+                guard let data, !state.cancelled else {
+                    if self.pendingPlaybackRange == range { self.pendingPlaybackRange = nil }
+                    return
+                }
+                if self.pendingPlaybackRange == range {
+                    self.pendingPlaybackRange = nil
+                    self.handleSpeechSuccess(data: data, range: range)
+                } else {
+                    self.segmentCache[range] = data
+                    // This was a preload; if nothing is playing yet, start it.
+                    if self.player == nil && self.delegate.state.value == .loading {
+                        self.handleSpeechSuccess(data: data, range: range)
+                    }
+                }
+                self.ensureSegmentsGenerated(after: range, voice: voice)
+            }
+        }
+        // Preload the following sentences concurrently.
+        ensureSegmentsGenerated(after: range, voice: voice)
+    }
+
+    private func ensureSegmentsGenerated(after currentRange: NSRange, voice: KokoroVoice) {
+        let currentlyBuffered = segmentCache.count + loadingSegments.count
+        let segmentsToLoad = Self.preloadAheadCount - currentlyBuffered
+        guard segmentsToLoad > 0 else { return }
+
+        var nextIndex = currentRange.location + currentRange.length
+        var loaded = 0
+        while loaded < segmentsToLoad {
+            guard let range = findNextRange(startingAt: nextIndex) else { break }
+            if segmentCache[range] != nil || loadingSegments.contains(range) {
+                nextIndex = range.location + range.length
+                continue
+            }
+            loadingSegments.insert(range)
+            let epoch = self.epoch
+            let speed = speechRateModifier
+            guard let text = text(forPageTextRange: range), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                loadingSegments.remove(range)
+                nextIndex = range.location + range.length
+                continue
+            }
+            let state = GenState()
+            ttsQueue.async { [weak self] in
+                let data = self?.generateWav(text: text, voice: voice, speed: speed, state: state)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.epoch == epoch else { return }
+                    self.loadingSegments.remove(range)
+                    guard let data, !state.cancelled else {
+                        if self.pendingPlaybackRange == range {
+                            self.pendingPlaybackRange = nil
+                            self.handleSpeechFailure(error: Error.cancelled)
+                        }
+                        return
+                    }
+                    if self.pendingPlaybackRange == range {
+                        self.pendingPlaybackRange = nil
+                        self.handleSpeechSuccess(data: data, range: range)
+                    } else {
+                        self.segmentCache[range] = data
+                    }
+                    self.ensureSegmentsGenerated(after: range, voice: voice)
+                }
+            }
+            nextIndex = range.location + range.length
+            loaded += 1
+        }
+    }
+
+    private func handleSpeechSuccess(data: Data, range: NSRange) {
+        segmentCache.removeValue(forKey: range)
+        play(data: data)
+    }
+
+    private func handleSpeechFailure(error: Swift.Error) {
+        if case Error.endOfPage = error {
+            if !delegate.goToNextPageIfAvailable() {
+                finishSpeaking()
+            }
+        } else {
+            DDLogError("KokoroVoiceProcessor: can't generate speech - \(error)")
+            endBackgroundTask()
+            delegate.state.accept(.stopped)
+        }
+    }
+
+    private func play(data: Data) {
+        do {
+            let audioPlayer = try AVAudioPlayer(data: data)
+            audioPlayer.delegate = self
+            audioPlayer.prepareToPlay()
+            audioPlayer.play()
+            player = audioPlayer
+            delegate.state.accept(.speaking)
+            endBackgroundTask()
+        } catch {
+            DDLogError("KokoroVoiceProcessor: can't play audio - \(error)")
+            endBackgroundTask()
+            delegate.state.accept(.stopped)
+        }
+    }
+
+    private func stopGenerationAndClearCache() {
+        genState?.cancelled = true
+        genState = nil
+        segmentCache.removeAll()
+        loadingSegments.removeAll()
+        pendingPlaybackRange = nil
+    }
+
+    private func finishSpeaking() {
+        genState?.cancelled = true
+        genState = nil
+        epoch += 1
+        segments = []
+        player?.stop()
+        player = nil
+        segmentCache.removeAll()
+        loadingSegments.removeAll()
+        pendingPlaybackRange = nil
+        shouldReloadOnResume = false
+        endBackgroundTask()
+        delegate.state.accept(.stopped)
+    }
+
+    // MARK: - Background Task
+
+    private func beginBackgroundTask() {
+        guard backgroundTaskID == .invalid else { return }
+        backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "com.zotero.speech.kokoroTransition") { [weak self] in
+            self?.endBackgroundTask()
+        }
+    }
+
+    private func endBackgroundTask() {
+        guard backgroundTaskID != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(backgroundTaskID)
+        backgroundTaskID = .invalid
+    }
+
+    // MARK: - Kokoro engine
+
+    /// Model file paths in the app bundle (extracted there by the "Bundle Kokoro model" build phase).
+    private static var modelPaths: (model: String, voices: String, tokens: String, dataDir: String, lexicon: String)? {
+        let fm = FileManager.default
+        guard let res = Bundle.main.resourceURL else { return nil }
+        let model = res.appendingPathComponent("model.int8.onnx").path
+        let voices = res.appendingPathComponent("voices.bin").path
+        let tokens = res.appendingPathComponent("tokens.txt").path
+        let dataDir = res.appendingPathComponent("espeak-ng-data", isDirectory: true).path
+        let lexicon = res.appendingPathComponent("lexicon-us-en.txt").path
+        guard fm.fileExists(atPath: model), fm.fileExists(atPath: voices),
+              fm.fileExists(atPath: tokens), fm.fileExists(atPath: dataDir) else { return nil }
+        return (model, voices, tokens, dataDir, fm.fileExists(atPath: lexicon) ? lexicon : "")
+    }
+
+    /// Generates 16-bit PCM WAV audio for `text`. Runs on `ttsQueue`; nil when cancelled or failed.
+    private func generateWav(text: String, voice: KokoroVoice, speed: Float, state: GenState) -> Data? {
+        #if canImport(SherpaOnnxShared) || canImport(SherpaOnnx)
+        guard let tts = ensureEngine() else { return nil }
+        var genConfig = SherpaOnnxGenerationConfigSwift(silenceScale: 0.2, speed: speed, sid: voice.sid)
+        let callback: TtsProgressCallbackWithArg = { _, _, _, arg in
+            let st = Unmanaged<GenState>.fromOpaque(arg!).takeUnretainedValue()
+            return st.cancelled ? 0 : 1
+        }
+        let rawState = Unmanaged.passUnretained(state).toOpaque()
+        let audio = tts.generateWithConfig(text: text, config: genConfig, callback: callback, arg: rawState)
+        guard !state.cancelled, !audio.samples.isEmpty else { return nil }
+        return Self.wavData(samples: audio.samples, sampleRate: audio.sampleRate)
+        #else
+        return nil
+        #endif
+    }
+
+    #if canImport(SherpaOnnxShared) || canImport(SherpaOnnx)
+    /// Lazily creates the TTS engine. Must be called on `ttsQueue`.
+    private func ensureEngine() -> SherpaOnnxOfflineTtsWrapper? {
+        if let tts { return tts }
+        guard let paths = Self.modelPaths else {
+            DDLogError("KokoroVoiceProcessor: model files missing from app bundle")
+            return nil
+        }
+        let kokoro = sherpaOnnxOfflineTtsKokoroModelConfig(
+            model: paths.model,
+            voices: paths.voices,
+            tokens: paths.tokens,
+            dataDir: paths.dataDir,
+            lengthScale: 1.0,
+            dictDir: "",
+            lexicon: paths.lexicon,
+            lang: ""
+        )
+        var config = sherpaOnnxOfflineTtsConfig(
+            model: sherpaOnnxOfflineTtsModelConfig(kokoro: kokoro, numThreads: 4, debug: 0)
+        )
+        let wrapper = SherpaOnnxOfflineTtsWrapper(config: &config)
+        guard wrapper.tts != nil else {
+            DDLogError("KokoroVoiceProcessor: could not initialize Kokoro engine")
+            return nil
+        }
+        tts = wrapper
+        DDLogInfo("KokoroVoiceProcessor: engine ready, speakers=\(wrapper.numSpeakers) rate=\(wrapper.sampleRate)")
+        return wrapper
+    }
+    #endif
+
+    /// Encodes float samples as 16-bit PCM WAV.
+    private static func wavData(samples: [Float], sampleRate: Int) -> Data {
+        var data = Data(capacity: 44 + samples.count * 2)
+        func append32(_ v: UInt32) {
+            data.append(UInt8(v & 0xff)); data.append(UInt8((v >> 8) & 0xff))
+            data.append(UInt8((v >> 16) & 0xff)); data.append(UInt8((v >> 24) & 0xff))
+        }
+        func append16(_ v: UInt16) {
+            data.append(UInt8(v & 0xff)); data.append(UInt8((v >> 8) & 0xff))
+        }
+        let dataSize = UInt32(samples.count * 2)
+        data.append(contentsOf: "RIFF".utf8)
+        append32(36 + dataSize)
+        data.append(contentsOf: "WAVE".utf8)
+        data.append(contentsOf: "fmt ".utf8)
+        append32(16)
+        append16(1) // PCM
+        append16(1) // mono
+        append32(UInt32(sampleRate))
+        append32(UInt32(sampleRate * 2)) // byte rate
+        append16(2) // block align
+        append16(16) // bits per sample
+        data.append(contentsOf: "data".utf8)
+        append32(dataSize)
+        for s in samples {
+            let clamped = max(-1.0, min(1.0, s))
+            let v = Int16(clamped * 32767.0)
+            append16(UInt16(bitPattern: v))
+        }
+        return data
+    }
+}
+
+extension KokoroVoiceProcessor: AVAudioPlayerDelegate {
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        guard flag, !segments.isEmpty, let voice, let speechRange = delegate.speechRange else {
+            finishSpeaking()
+            return
+        }
+        beginBackgroundTask()
+        startSpeaking(startIndex: speechRange.location + speechRange.length, voice: voice)
+    }
+
+    func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: (any Swift.Error)?) {
+        DDLogError("KokoroVoiceProcessor: decode error - \(String(describing: error))")
         finishSpeaking()
     }
 }

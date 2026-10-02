@@ -13,7 +13,7 @@ import CocoaLumberjackSwift
 import RxSwift
 
 enum ReadAloudVoiceType: CaseIterable, Equatable {
-    case premium, standard, local
+    case premium, standard, local, kokoro
 
     var remoteTier: RemoteVoice.Tier? {
         switch self {
@@ -23,7 +23,7 @@ enum ReadAloudVoiceType: CaseIterable, Equatable {
         case .standard:
             return .standard
 
-        case .local:
+        case .local, .kokoro:
             return nil
         }
     }
@@ -38,6 +38,9 @@ enum ReadAloudVoiceType: CaseIterable, Equatable {
 
         case .local:
             return L10n.Speech.Onboarding.tierLocal
+
+        case .kokoro:
+            return L10n.Speech.Onboarding.tierKokoro
         }
     }
 
@@ -52,6 +55,9 @@ enum ReadAloudVoiceType: CaseIterable, Equatable {
 
         case .local:
             prefix = "speech.onboarding.description_local"
+
+        case .kokoro:
+            prefix = "speech.onboarding.description_kokoro"
         }
         let bundle = Bundle(for: AppDelegate.self)
         var results: [String] = []
@@ -103,6 +109,10 @@ final class ReadAloudVoiceSelectionModel: ObservableObject {
 
         case .premium, .standard:
             return voicesResponse != nil
+
+        case .kokoro:
+            // Kokoro voices are English-only; no language choice.
+            return false
         }
     }
 
@@ -113,6 +123,9 @@ final class ReadAloudVoiceSelectionModel: ObservableObject {
 
         case .premium, .standard:
             return groupedRemoteVoices.map { (locale: $0.locale, displayName: $0.displayName) }
+
+        case .kokoro:
+            return []
         }
     }
 
@@ -135,7 +148,7 @@ final class ReadAloudVoiceSelectionModel: ObservableObject {
         case .standard:
             return standardCreditsRemaining
 
-        case .local:
+        case .local, .kokoro:
             return nil
         }
     }
@@ -175,6 +188,10 @@ final class ReadAloudVoiceSelectionModel: ObservableObject {
             self.type = voice.tier == .premium ? .premium : .standard
             self.selectedRegionLocale = nil
 
+        case .kokoro:
+            self.type = .kokoro
+            self.selectedRegionLocale = nil
+
         case .none:
             self.type = .standard
             self.selectedRegionLocale = nil
@@ -206,6 +223,9 @@ final class ReadAloudVoiceSelectionModel: ObservableObject {
         case .premium, .standard:
             reloadGroupedRemoteVoices()
             autoSelectRemoteVoice()
+
+        case .kokoro:
+            selectedVoice = .kokoro(Defaults.shared.kokoroVoice ?? .heart)
         }
     }
 
@@ -218,6 +238,7 @@ final class ReadAloudVoiceSelectionModel: ObservableObject {
     }
 
     func handleSelectedRegionChange() {
+        guard type != .kokoro else { return }
         autoSelectVoiceForRegion(selectedRegionLocale)
     }
 
@@ -237,6 +258,9 @@ final class ReadAloudVoiceSelectionModel: ObservableObject {
 
         case .premium, .standard:
             autoSelectRemoteVoice()
+
+        case .kokoro:
+            selectedVoice = .kokoro(Defaults.shared.kokoroVoice ?? .heart)
         }
     }
 
@@ -244,6 +268,9 @@ final class ReadAloudVoiceSelectionModel: ObservableObject {
         switch type {
         case .local:
             return VoiceUtility.availableLocalLanguages()
+
+        case .kokoro:
+            return []
 
         case .premium:
             return voicesResponse.flatMap({ VoiceUtility.availableRemoteLanguages(for: .premium, response: $0) }) ?? []
@@ -370,6 +397,9 @@ final class ReadAloudVoiceSelectionModel: ObservableObject {
                 return locale
             }
             return groupedRemoteVoices.first(where: { $0.voices.contains(where: { $0.id == remoteVoice.id }) })?.locale
+
+        case .kokoro:
+            return "en-US"
         }
     }
 
@@ -391,6 +421,9 @@ final class ReadAloudVoiceSelectionModel: ObservableObject {
             guard let response = voicesResponse, let tier = type.remoteTier,
                   let remoteVoice = VoiceUtility.findRemoteVoice(for: locale, tier: tier, response: response) else { return }
             selectedVoice = .remote(remoteVoice)
+
+        case .kokoro:
+            break
         }
     }
 
@@ -402,6 +435,7 @@ final class ReadAloudVoiceSelectionModel: ObservableObject {
         case .local(let avVoice):
             Defaults.shared.defaultLocalVoiceForLanguage[storageKey] = avVoice.identifier
             Defaults.shared.remoteVoiceTier = nil
+            Defaults.shared.kokoroVoice = nil
 
         case .remote(let remoteVoice):
             switch remoteVoice.tier {
@@ -412,6 +446,11 @@ final class ReadAloudVoiceSelectionModel: ObservableObject {
                 Defaults.shared.defaultStandardRemoteVoiceForLanguage[storageKey] = remoteVoice
             }
             Defaults.shared.remoteVoiceTier = remoteVoice.tier
+            Defaults.shared.kokoroVoice = nil
+
+        case .kokoro(let kokoroVoice):
+            Defaults.shared.kokoroVoice = kokoroVoice
+            Defaults.shared.remoteVoiceTier = nil
         }
     }
 }

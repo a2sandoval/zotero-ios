@@ -174,6 +174,9 @@ final class Defaults {
     @CodableUserDefault(key: "SpeechRemoteVoiceTier", defaultValue: nil, encoder: Defaults.jsonEncoder, decoder: Defaults.jsonDecoder)
     var remoteVoiceTier: RemoteVoice.Tier?
 
+    @CodableUserDefault(key: "SpeechDefaultKokoroVoice", defaultValue: nil, encoder: Defaults.jsonEncoder, decoder: Defaults.jsonDecoder)
+    var kokoroVoice: KokoroVoice?
+
     @UserDefault(key: "ReadAloudSpeechRate", defaultValue: 1)
     var speechRate: Float
 

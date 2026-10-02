@@ -122,6 +122,7 @@ final class ReadAloudViewHandler<Delegate: SpeechManagerDelegate> {
             delegate: delegate,
             voiceLanguage: language,
             remoteVoiceTier: Defaults.shared.remoteVoiceTier,
+            kokoroVoice: Defaults.shared.remoteVoiceTier == nil ? Defaults.shared.kokoroVoice : nil,
             remoteVoicesController: remoteVoicesController,
             documentWorkerController: documentWorkerController
         )
@@ -337,7 +338,7 @@ final class ReadAloudViewHandler<Delegate: SpeechManagerDelegate> {
                 return L10n.Speech.continueLocal
             }
 
-        case .local, .none:
+        case .local, .kokoro, .none:
             return nil
         }
     }
