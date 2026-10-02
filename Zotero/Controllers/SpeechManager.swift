@@ -2617,7 +2617,7 @@ private final class KokoroVoiceProcessor: NSObject, VoiceProcessor {
         let rawState = Unmanaged.passUnretained(state).toOpaque()
         let audio = tts.generateWithConfig(text: text, config: genConfig, callback: callback, arg: rawState)
         guard !state.cancelled, !audio.samples.isEmpty else { return nil }
-        return Self.wavData(samples: audio.samples, sampleRate: audio.sampleRate)
+        return Self.wavData(samples: audio.samples, sampleRate: Int(audio.sampleRate))
         #else
         return nil
         #endif
