@@ -1,0 +1,56 @@
+name: Build IPA
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install SwiftGen
+        run: which swiftgen || HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install swiftgen
+
+      - name: Select Xcode 26.5
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "26.5"
+
+      - name: Cache ONNX Runtime
+        uses: actions/cache@v4
+        with:
+          path: Dependencies/ONNXRuntime
+          key: onnxruntime-${{ runner.os }}-${{ hashFiles('scripts/fetch_onnxruntime.sh') }}
+
+      - name: Prepare ONNX Runtime
+        run: scripts/fetch_onnxruntime.sh
+
+      - name: Build app (unsigned)
+        run: |
+          xcodebuild \
+            -project Zotero.xcodeproj \
+            -scheme Zotero \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            SKIP_SWIFTLINT=1 \
+            build
+
+      - name: Package unsigned IPA
+        run: |
+          APP_PATH="build/Build/Products/Release-iphoneos/Zotero.app"
+          ls -la "$APP_PATH"
+          rm -rf Payload && mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
+          zip -qry Zotero-unsigned.ipa Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Zotero-unsigned-ipa
+          path: Zotero-unsigned.ipa
