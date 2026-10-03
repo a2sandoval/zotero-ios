@@ -46,7 +46,6 @@ jobs:
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
             SKIP_SWIFTLINT=1 \
-            EXPANDED_CODE_SIGN_IDENTITY=- \
             build
 
 
